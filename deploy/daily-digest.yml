@@ -42,7 +42,7 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"   # manual runs always go ahead
           else
-            pip install "finfluencer-digest @ git+https://github.com/jackieyangjq/finfluencer-digest@v1.0.0"
+            pip install "finfluencer-digest @ git+https://github.com/jackyyangjq/finfluencer-digest@v1.0.0"
             out="$(finfluencer-digest gate --config config.yaml)"
             echo "$out"   # line 1 is run=true or run=false; line 2, if any, is the reason
             first="$(printf '%s\n' "$out" | head -1)"
@@ -62,7 +62,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: pip install "finfluencer-digest[portfolio] @ git+https://github.com/jackieyangjq/finfluencer-digest@v1.0.0"
+      - run: pip install "finfluencer-digest[portfolio] @ git+https://github.com/jackyyangjq/finfluencer-digest@v1.0.0"
       - name: Build and send the digest
         run: finfluencer-digest --config config.yaml ${{ inputs.portfolio_only && '--portfolio-only' || '' }} ${{ inputs.list_only && '--list' || '' }}
         env:

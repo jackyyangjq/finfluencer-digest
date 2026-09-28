@@ -2,7 +2,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-[![CI](https://github.com/jackieyangjq/finfluencer-digest/actions/workflows/ci.yml/badge.svg)](https://github.com/jackieyangjq/finfluencer-digest/actions/workflows/ci.yml)
+[![CI](https://github.com/jackyyangjq/finfluencer-digest/actions/workflows/ci.yml/badge.svg)](https://github.com/jackyyangjq/finfluencer-digest/actions/workflows/ci.yml)
 
 Daily digest of finance YouTubers and X accounts: Gemini watches the videos, extracts structured stock calls, aggregates consensus, and emails you.
 
@@ -104,14 +104,14 @@ Each blogger's view on each ticker is appended to `data/calls.jsonl`, one JSON l
 Needs Python 3.12 or later. The package is not on PyPI yet, so install it from GitHub and run the demo:
 
 ```bash
-pip install "finfluencer-digest @ git+https://github.com/jackieyangjq/finfluencer-digest"
+pip install "finfluencer-digest @ git+https://github.com/jackyyangjq/finfluencer-digest"
 finfluencer-digest --demo
 ```
 
 Or run it once with uv, without a permanent install:
 
 ```bash
-uv tool run --from "git+https://github.com/jackieyangjq/finfluencer-digest" finfluencer-digest --demo
+uv tool run --from "git+https://github.com/jackyyangjq/finfluencer-digest" finfluencer-digest --demo
 ```
 
 The demo runs the whole pipeline on made-up channels, posts and recorded model replies: no config, keys, network or email. It prints the digest and saves it to `demo-output/2026-09-23.md` (`--out DIR` picks another folder).
@@ -121,8 +121,8 @@ For real use you need a Gemini API key (the free tier is enough) and a Gmail acc
 ```bash
 # 1. Config and keys: edit the channel list in config.yaml; fill in GEMINI_API_KEY, GMAIL_ADDRESS
 #    and GMAIL_APP_PASSWORD in .env (the file says where to get each one)
-curl -fsSLo config.yaml https://raw.githubusercontent.com/jackieyangjq/finfluencer-digest/main/config.example.yaml
-curl -fsSLo .env https://raw.githubusercontent.com/jackieyangjq/finfluencer-digest/main/.env.example
+curl -fsSLo config.yaml https://raw.githubusercontent.com/jackyyangjq/finfluencer-digest/main/config.example.yaml
+curl -fsSLo .env https://raw.githubusercontent.com/jackyyangjq/finfluencer-digest/main/.env.example
 
 # 2. Check the Gemini key and every configured model, the Gmail login, each channel and X account
 finfluencer-digest --check
@@ -131,7 +131,7 @@ finfluencer-digest --check
 finfluencer-digest --limit 1 --dry-run
 ```
 
-After that, `finfluencer-digest` does a real run; the digest goes to `GMAIL_ADDRESS` unless you set `EMAIL_TO`. Keys can also come from environment variables instead of `.env`. `--config PATH` points to a config elsewhere, and `state/`, `data/` and `digests/` are always written next to the config file. To add a channel, `finfluencer-digest --find-channel @handle` prints its ID. The portfolio section is off by default. It needs the extra (`pip install "finfluencer-digest[portfolio] @ git+https://github.com/jackieyangjq/finfluencer-digest"`), `portfolio.enabled: true` in `config.yaml` and a holdings file; see [the portfolio part of the deployment guide](deploy/README.md#portfolio-section-optional).
+After that, `finfluencer-digest` does a real run; the digest goes to `GMAIL_ADDRESS` unless you set `EMAIL_TO`. Keys can also come from environment variables instead of `.env`. `--config PATH` points to a config elsewhere, and `state/`, `data/` and `digests/` are always written next to the config file. To add a channel, `finfluencer-digest --find-channel @handle` prints its ID. The portfolio section is off by default. It needs the extra (`pip install "finfluencer-digest[portfolio] @ git+https://github.com/jackyyangjq/finfluencer-digest"`), `portfolio.enabled: true` in `config.yaml` and a holdings file; see [the portfolio part of the deployment guide](deploy/README.md#portfolio-section-optional).
 
 ## Deploy
 
@@ -150,7 +150,7 @@ It is built to run on GitHub Actions' free scheduler, with nothing left running 
 ## Tests
 
 ```bash
-git clone https://github.com/jackieyangjq/finfluencer-digest && cd finfluencer-digest
+git clone https://github.com/jackyyangjq/finfluencer-digest && cd finfluencer-digest
 pip install -e ".[dev,portfolio]"
 ruff check . && pytest -q
 ```
@@ -189,7 +189,7 @@ config.example.yaml     channels, X accounts, models, portfolio settings
 ## Roadmap
 
 - **Filings Q&A research agent** (October–November 2026): answers questions about companies from their SEC filings, with a source for every sentence.
-- **Call tracker** (shipped 2026-09-24 in the [catfolio fork](https://github.com/jackieyangjq/catfolio); upstream [PR #7](https://github.com/irrwood/catfolio/pull/7)): imports `data/calls.jsonl` and scores every call against the price moves that followed, with a hit rate and a follow-every-call curve per blogger.
+- **Call tracker** (shipped 2026-09-24 in the [catfolio fork](https://github.com/jackyyangjq/catfolio); upstream [PR #7](https://github.com/irrwood/catfolio/pull/7)): imports `data/calls.jsonl` and scores every call against the price moves that followed, with a hit rate and a follow-every-call curve per blogger.
 
 ## License
 

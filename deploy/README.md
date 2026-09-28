@@ -27,7 +27,7 @@ Keys and passwords never go in the repo. Keep `.env` on your own machine (list i
 To try the same config on your own machine first, run these in the folder that holds `config.yaml`:
 
 ```bash
-pip install "finfluencer-digest[portfolio] @ git+https://github.com/jackieyangjq/finfluencer-digest@v1.0.0"
+pip install "finfluencer-digest[portfolio] @ git+https://github.com/jackyyangjq/finfluencer-digest@v1.0.0"
 finfluencer-digest --check                # Gemini key and models, Gmail login, channels, X accounts
 finfluencer-digest --limit 1 --dry-run    # one video; the digest is saved to digests/ and not emailed
 ```

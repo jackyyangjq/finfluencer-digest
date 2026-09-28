@@ -2,7 +2,7 @@
 
 [English](README.md) | **简体中文**
 
-[![CI](https://github.com/jackieyangjq/finfluencer-digest/actions/workflows/ci.yml/badge.svg)](https://github.com/jackieyangjq/finfluencer-digest/actions/workflows/ci.yml)
+[![CI](https://github.com/jackyyangjq/finfluencer-digest/actions/workflows/ci.yml/badge.svg)](https://github.com/jackyyangjq/finfluencer-digest/actions/workflows/ci.yml)
 
 财经 YouTube 博主和 X 账号的每日摘要：Gemini 看视频，按固定格式提取个股观点，汇总共识，然后发邮件给你。
 
@@ -104,14 +104,14 @@ GitHub 的免费定时服务在繁忙时可能晚启动，甚至直接丢掉某�
 需要 Python 3.12 或更高版本。这个包还没发布到 PyPI（Python 官方的软件包仓库），所以从 GitHub 安装，然后运行演示：
 
 ```bash
-pip install "finfluencer-digest @ git+https://github.com/jackieyangjq/finfluencer-digest"
+pip install "finfluencer-digest @ git+https://github.com/jackyyangjq/finfluencer-digest"
 finfluencer-digest --demo
 ```
 
 也可以用 uv（一个 Python 包管理工具）直接运行一次，不用正式安装：
 
 ```bash
-uv tool run --from "git+https://github.com/jackieyangjq/finfluencer-digest" finfluencer-digest --demo
+uv tool run --from "git+https://github.com/jackyyangjq/finfluencer-digest" finfluencer-digest --demo
 ```
 
 演示会用虚构的频道、帖子和录好的模型回复把整个流程跑一遍：不需要配置文件、密钥和网络，也不发邮件。它会打印日报，并保存到 `demo-output/2026-09-23.md`（用 `--out DIR` 可以换一个文件夹）。
@@ -121,8 +121,8 @@ uv tool run --from "git+https://github.com/jackieyangjq/finfluencer-digest" finf
 ```bash
 # 1. 配置和密钥：在 config.yaml 里改频道列表；在 .env 里填好 GEMINI_API_KEY、GMAIL_ADDRESS
 #    和 GMAIL_APP_PASSWORD（文件里写了每一项去哪里申请）
-curl -fsSLo config.yaml https://raw.githubusercontent.com/jackieyangjq/finfluencer-digest/main/config.example.yaml
-curl -fsSLo .env https://raw.githubusercontent.com/jackieyangjq/finfluencer-digest/main/.env.example
+curl -fsSLo config.yaml https://raw.githubusercontent.com/jackyyangjq/finfluencer-digest/main/config.example.yaml
+curl -fsSLo .env https://raw.githubusercontent.com/jackyyangjq/finfluencer-digest/main/.env.example
 
 # 2. 检查 Gemini 密钥和配置里的每个模型、Gmail 登录、每个频道和 X 账号
 finfluencer-digest --check
@@ -131,7 +131,7 @@ finfluencer-digest --check
 finfluencer-digest --limit 1 --dry-run
 ```
 
-之后运行 `finfluencer-digest` 就是正式运行；日报发到 `GMAIL_ADDRESS`，设置了 `EMAIL_TO` 就改发到那里。密钥也可以用环境变量（在系统或终端里预先设好的变量）提供，不一定写在 `.env` 里。`--config PATH` 可以指定放在别处的配置文件；`state/`、`data/` 和 `digests/` 总是写在配置文件旁边。要加频道，用 `finfluencer-digest --find-channel @handle` 就能查出它的 ID。持仓部分默认关闭。打开它需要三样：一是装上可选组件（包名后方括号里的那部分额外依赖），命令是 `pip install "finfluencer-digest[portfolio] @ git+https://github.com/jackieyangjq/finfluencer-digest"`；二是在 `config.yaml` 里设 `portfolio.enabled: true`；三是准备一个持仓文件。详见部署说明（英文）里的[持仓部分](deploy/README.md#portfolio-section-optional)。
+之后运行 `finfluencer-digest` 就是正式运行；日报发到 `GMAIL_ADDRESS`，设置了 `EMAIL_TO` 就改发到那里。密钥也可以用环境变量（在系统或终端里预先设好的变量）提供，不一定写在 `.env` 里。`--config PATH` 可以指定放在别处的配置文件；`state/`、`data/` 和 `digests/` 总是写在配置文件旁边。要加频道，用 `finfluencer-digest --find-channel @handle` 就能查出它的 ID。持仓部分默认关闭。打开它需要三样：一是装上可选组件（包名后方括号里的那部分额外依赖），命令是 `pip install "finfluencer-digest[portfolio] @ git+https://github.com/jackyyangjq/finfluencer-digest"`；二是在 `config.yaml` 里设 `portfolio.enabled: true`；三是准备一个持仓文件。详见部署说明（英文）里的[持仓部分](deploy/README.md#portfolio-section-optional)。
 
 ## 部署
 
@@ -150,7 +150,7 @@ finfluencer-digest --limit 1 --dry-run
 ## 测试
 
 ```bash
-git clone https://github.com/jackieyangjq/finfluencer-digest && cd finfluencer-digest
+git clone https://github.com/jackyyangjq/finfluencer-digest && cd finfluencer-digest
 pip install -e ".[dev,portfolio]"
 ruff check . && pytest -q
 ```
@@ -189,7 +189,7 @@ config.example.yaml     频道、X 账号、模型、持仓设置
 ## 后续计划
 
 - **财报问答研究助手**（2026 年 10 月至 11 月）：根据公司向美国证监会（SEC）提交的文件（年报、季报等）回答关于公司的问题，每句话都注明出处。
-- **观点记分牌**（2026-09-24 已在 [catfolio fork](https://github.com/jackieyangjq/catfolio) 里上线，上游 [PR #7](https://github.com/irrwood/catfolio/pull/7)）：导入 `data/calls.jsonl`，把每条观点和之后的实际涨跌对照，给每位博主算出命中率和“每次都跟”的净值曲线。
+- **观点记分牌**（2026-09-24 已在 [catfolio fork](https://github.com/jackyyangjq/catfolio) 里上线，上游 [PR #7](https://github.com/irrwood/catfolio/pull/7)）：导入 `data/calls.jsonl`，把每条观点和之后的实际涨跌对照，给每位博主算出命中率和“每次都跟”的净值曲线。
 
 ## 许可证
 
