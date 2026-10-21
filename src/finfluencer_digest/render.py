@@ -5,11 +5,13 @@ import re
 
 import markdown
 
-from .aggregate import STANCES, stock_mentions
+from .aggregate import STANCES, canonical_symbol, stock_mentions
 
 
 def build_digest(date_label: str, results: list, synth: str, failures: list, skipped: list, watch: set,
-                 usage_line: str = "", portfolio_md: str = "", held: frozenset = frozenset()) -> str:
+                 usage_line: str = "", portfolio_md: str = "", held: frozenset = frozenset(),
+                 aliases: dict | None = None) -> str:
+    """aliases 是同公司代码表（aggregate.symbol_aliases）；统计、关注和持仓都按规范化后的代码对照。"""
     channels = list(dict.fromkeys(v["channel"] for v, _ in results))
     n_videos = sum(1 for v, _ in results if not v["id"].startswith("x:"))
     title = "投资日报" if portfolio_md else "财经博主日报"
@@ -25,8 +27,10 @@ def build_digest(date_label: str, results: list, synth: str, failures: list, ski
                 + f"，来自 {len(channels)} 位博主：{'、'.join(channels)}。", "",
                 synth, ""]
 
-        mentions = stock_mentions(results)
-        hits = [sym for sym in sorted(watch - held) if sym in mentions]  # 持有的股票已在“我的持仓”里列出
+        mentions = stock_mentions(results, aliases)
+        watch_c = {canonical_symbol(x, aliases) for x in watch}
+        held_c = {canonical_symbol(x, aliases) for x in held}
+        hits = [sym for sym in sorted(watch_c - held_c) if sym in mentions]  # 持有的股票已在“我的持仓”里列出
         if hits:
             out += ["## 你关注的股票", ""]
             for sym in hits:
@@ -34,13 +38,18 @@ def build_digest(date_label: str, results: list, synth: str, failures: list, ski
                 out += [f"- {r}" for r in mentions[sym]["reasons"]]
                 out.append("")
 
-        if mentions:
+        def n_channels(a):
+            return len({c for s in STANCES for c in a[s]})
+        mine = watch_c | held_c
+        # 只列被 2 位以上博主提到的，或你持有、关注的
+        listed = {sym: a for sym, a in mentions.items() if n_channels(a) >= 2 or sym in mine}
+        if listed:
             def cell(names):
                 return f"{len(names)}（{'、'.join(names)}）" if names else ""
-            ranked = sorted(mentions.items(), key=lambda kv: -sum(len(kv[1][s]) for s in STANCES))
+            ranked = sorted(listed.items(), key=lambda kv: -sum(len(kv[1][s]) for s in STANCES))
             out += ["## 个股提及统计", "", "| 代码 | 名称 | 看多 | 看空 | 中性 |", "|---|---|---|---|---|"]
             for sym, a in ranked:
-                mark = "⭐ " if sym in watch | held else ""
+                mark = "⭐ " if sym in mine else ""
                 out.append(f"| {mark}{sym} | {a['name']} | {cell(a['看多'])} | {cell(a['看空'])} | {cell(a['中性'])} |")
             out.append("")
 
@@ -50,11 +59,8 @@ def build_digest(date_label: str, results: list, synth: str, failures: list, ski
             if v.get("note"):
                 out += [f"*{v['note']}*", ""]
             out += [f"**一句话**：{s.one_line}", ""]
-            out += [f"- {p}" for p in s.main_points] + [""]
-            if s.key_facts:
-                out += ["**提到的数据**：", ""] + [f"- {x}" for x in s.key_facts] + [""]
-            if s.risks:
-                out += ["**博主提到的风险**：", ""] + [f"- {x}" for x in s.risks] + [""]
+            if s.main_points:
+                out += [f"- {p}" for p in s.main_points[:3]] + [""]  # 提到的数据和风险只用于汇总，不进邮件
 
     if skipped:
         out += (["---", "", "以下内容与投资无关，已跳过：", ""]

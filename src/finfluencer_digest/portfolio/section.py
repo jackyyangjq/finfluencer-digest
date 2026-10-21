@@ -1,5 +1,5 @@
 """持仓梳理：读取持仓快照和手动持仓表，加上免费行情、新闻和博主观点，生成邮件最前面的“我的持仓”部分。
-包括总览、风险提示、盘面，以及每只持仓一张深度卡片（价位、技术面、分析师、新闻、多空证据）。
+包括总览、风险提示、盘面，以及每只持仓一张紧凑卡片（数据、多空证据、新闻、博主、要盯的信号、结论）。
 只做数据整理和证据对比，不给买卖建议。发给 Gemini 的只有公开数据，不含你的数量、成本和金额。
 持仓文件都在 holdings_root 下：portfolio/*.json（券商持仓快照）和配置里 manual_file 指定的手动持仓表。
 """
@@ -9,7 +9,7 @@ import datetime as dt
 import json
 import logging
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -19,6 +19,7 @@ import yfinance as yf
 from google.genai import types
 from pydantic import BaseModel, Field
 
+from ..aggregate import STANCES, canonical_symbol, symbol_aliases
 from ..config import LOCAL_TZ
 from ..state import Paths
 from . import longbridge as longbridge_api
@@ -32,17 +33,24 @@ logging.getLogger("yfinance").setLevel(logging.CRITICAL)  # ETF 没有财报日�
 
 # ---------- 读持仓 ----------
 
+def _split_market(symbol: str) -> tuple[str, str]:
+    s = symbol.upper().lstrip("$")
+    return (s[:-3], s[-2:]) if s.endswith((".US", ".HK")) else (s, "")
+
+
 def yahoo_symbol(symbol: str) -> str:
-    """长桥格式转成行情库格式：NVDA.US → NVDA，700.HK → 0700.HK，00700.HK → 0700.HK。"""
-    code, _, market = symbol.upper().partition(".")
+    """长桥格式转成行情库格式：NVDA.US → NVDA，700.HK → 0700.HK，00700.HK → 0700.HK，BRK.B.US → BRK-B。"""
+    code, market = _split_market(symbol)
     if market == "HK":
         return code.lstrip("0").zfill(4) + ".HK"
-    return code
+    return code.replace(".", "-")
 
 
 def base_symbol(symbol: str) -> str:
-    """用来和博主提到的代码对上：NVDA.US → NVDA，00700.HK → 700。"""
-    return symbol.upper().split(".")[0].lstrip("$").lstrip("0") or "0"
+    """用来和博主提到的代码对上：NVDA.US → NVDA，00700.HK → 700，BRK-B → BRK.B。
+    同一家公司的不同代码（GOOGL 和 GOOG）再经 aggregate.canonical_symbol 统一。"""
+    code, _ = _split_market(symbol)
+    return code.replace("-", ".").replace("/", ".").lstrip("0") or "0"
 
 
 def hkd_per_usd() -> float:
@@ -142,15 +150,15 @@ def returns(yahoo: str, q: dict | None) -> dict | None:
 class HoldingAnalysis(BaseModel):
     symbol: str = Field(description="原样返回给定的代码")
     theme: str = Field(description="投资大类，2-8 个字")
-    good_news: list[str] = Field(description="近 7 天新闻里的利好，最多 3 条；每条用一句简体中文概括要点"
-                                             "（不要照抄英文标题），末尾括号注明（月-日 来源）")
-    bad_news: list[str] = Field(description="近 7 天新闻里的利空，最多 3 条；每条用一句简体中文概括要点"
-                                            "（不要照抄英文标题），末尾括号注明（月-日 来源）")
-    bull_points: list[str] = Field(description="综合全部数据的看多证据，2-4 条，引用具体数字")
-    bear_points: list[str] = Field(description="综合全部数据的看空证据，2-4 条，引用具体数字")
-    watch: list[str] = Field(description="接下来值得盯的 2-3 个信号：关键价位、财报、行业数据等")
+    good_news: list[str] = Field(description="近 7 天新闻里最重要的利好，最多 1 条；一句简体中文概括要点，"
+                                             "不超过 30 个汉字（不要照抄英文标题），末尾括号注明（月-日 来源）")
+    bad_news: list[str] = Field(description="近 7 天新闻里最重要的利空，最多 1 条；一句简体中文概括要点，"
+                                            "不超过 30 个汉字（不要照抄英文标题），末尾括号注明（月-日 来源）")
+    bull_points: list[str] = Field(description="综合全部数据的看多证据，2 条，引用具体数字，每条不超过 30 个汉字")
+    bear_points: list[str] = Field(description="综合全部数据的看空证据，2 条，引用具体数字，每条不超过 30 个汉字")
+    watch: list[str] = Field(description="接下来值得盯的 2 个信号，如关键价位、财报、行业数据，每条不超过 30 个汉字")
     lean: str = Field(description="证据整体偏向，只能是：偏多、偏空、分歧")
-    lean_reason: str = Field(description="一句话说明证据为什么偏向这一边")
+    lean_reason: str = Field(description="一句话说明证据为什么偏向这一边，不超过 40 个汉字")
 
 
 class Analyses(BaseModel):
@@ -164,8 +172,11 @@ ANALYSIS_PROMPT = """今天是 {today}。你是一名客观的证券研究助理
 2. good_news 和 bad_news 只能来自“近7天新闻”列表，不要把技术指标或估值写进去；只挑对公司业务或股价有实际影响的新闻，
    忽略“股价涨了 X%，你该知道什么”“X 和 Y 哪个更值得买”这类没有新信息的稿件；没有合适的就留空。
 3. 不要给出买入、卖出、持有、加仓、减仓、止损等操作建议，也不要给出你自己的目标价。
-4. 投资大类用尽量宽的类别（如 AI数据中心、新能源汽车、半导体、消费、金融）；业绩主要靠同一股需求驱动的必须用完全相同的名称，例如光模块、存储芯片、数据中心电源散热都写“AI数据中心”。
-5. 全部用简体中文。
+4. 估值优先引用预期市盈率；过去 12 个月市盈率低于预期市盈率时，不要把过去 12 个月市盈率当作估值便宜的看多证据。
+5. 关键价位（均线、近期区间的高低点）只在 watch 里写，最多一个价位一条。
+6. 每条都短：不超过 30 个汉字，不写套话。
+7. 投资大类用尽量宽的类别（如 AI数据中心、新能源汽车、半导体、消费、金融）；业绩主要靠同一股需求驱动的必须用完全相同的名称，例如光模块、存储芯片、数据中心电源散热都写“AI数据中心”。
+8. 全部用简体中文。
 
 {data}"""  # noqa: E501
 
@@ -195,18 +206,36 @@ def analyze(ask, cfg: dict, payload: list[dict]) -> dict[str, HoldingAnalysis]:
 
 # ---------- 博主观点 ----------
 
-def blogger_views(held: dict[str, str], today_rows: list[dict], days: int, calls_file: Path) -> dict[str, list[str]]:
+def blogger_views(held: dict[str, str], today_rows: list[dict], days: int, calls_file: Path,
+                  aliases: dict | None = None) -> dict[str, list[dict]]:
+    """held：规范化代码 → 行情库代码。返回 行情库代码 → 最近几天博主观点（按时间先后），
+    博主说的代码和持仓代码都经 canonical_symbol 统一（GOOGL 能对上 GOOG）。"""
     since = (dt.date.today() - dt.timedelta(days=days)).isoformat()
     rows = ([json.loads(line) for line in calls_file.read_text(encoding="utf-8").splitlines()]
             if calls_file.exists() else [])
     views, seen = defaultdict(list), set()
     for r in rows + today_rows:
-        b = base_symbol(r["symbol"])
+        b = canonical_symbol(base_symbol(r["symbol"]), aliases)
         key = (r["video_id"], b)
         if r["date"] >= since and b in held and key not in seen:
             seen.add(key)
-            views[held[b]].append(f"{r['date'][5:]} {r['channel']}（{r['stance']}）：{r['reason']}")
+            views[held[b]].append({k: r[k] for k in ("date", "channel", "stance", "reason")})
+    for v in views.values():
+        v.sort(key=lambda x: x["date"])
     return views
+
+
+def view_text(v: dict) -> str:
+    return f"{v['date'][5:]} {v['channel']}（{v['stance']}）：{v['reason']}"
+
+
+def valuation_payload(valuation: dict) -> dict:
+    """交给 Gemini 的估值；过去 12 个月市盈率低于预期市盈率时附一句程序生成的说明。"""
+    out = {("预期市盈率" if k == "forwardPE" else "过去12个月市盈率"): round(v, 1) for k, v in valuation.items()}
+    fwd, trailing = valuation.get("forwardPE"), valuation.get("trailingPE")
+    if fwd and trailing and trailing < fwd:
+        out["说明"] = "过去 12 个月利润可能含一次性收益，预期市盈率更能反映当前估值"
+    return out
 
 
 # ---------- 拼报告 ----------
@@ -264,9 +293,10 @@ def _build_section(cfg: dict, ask, today_rows: list[dict], holdings_root: Path) 
         r["weight"] = (r["value"] or 0) / stock_value if stock_value else 0
     rows.sort(key=lambda r: -r["weight"])
 
-    held = {base_symbol(r["symbol"]): r["yahoo"] for r in rows}
+    aliases = symbol_aliases(cfg)
+    held = {canonical_symbol(base_symbol(r["symbol"]), aliases): r["yahoo"] for r in rows}
     calls_file = Paths(holdings_root).calls_file  # holdings_root 就是配置目录，博主观点记录也在这里
-    views = blogger_views(held, today_rows, pcfg["blogger_days"], calls_file)
+    views = blogger_views(held, today_rows, pcfg["blogger_days"], calls_file, aliases)
     bench = {s: returns(s, live.get(s)) for s in benchmarks | set(pcfg["market"].values())}
 
     # 交给 Gemini 的只有公开数据（不含数量、成本、金额）
@@ -289,11 +319,10 @@ def _build_section(cfg: dict, ask, today_rows: list[dict], holdings_root: Path) 
             "技术面": ta.describe(t),
             "板块对比": relative_text(r, b),
             "分析师": analyst_text(r["d"].get("analyst")),
-            "估值": {("预期市盈率" if k == "forwardPE" else "过去12个月市盈率"): round(v, 1)
-                   for k, v in (r["d"].get("valuation") or {}).items()},
+            "估值": valuation_payload(r["d"].get("valuation") or {}),
             "财报日期": str(r["d"]["earnings"]) if r["d"].get("earnings") else None,
             "近7天新闻": [f"{x['date'][5:]}｜{x['source']}｜{x['title']}｜{x['summary']}" for x in r["news"]],
-            "博主观点": views.get(r["yahoo"], []),
+            "博主观点": [view_text(v) for v in views.get(r["yahoo"], [])],
         })
     try:
         analyses = analyze(ask, cfg, payload) if payload else {}
@@ -305,7 +334,7 @@ def _build_section(cfg: dict, ask, today_rows: list[dict], holdings_root: Path) 
         if extra.get(r["yahoo"], {}).get("theme"):
             theme_of[base_symbol(r["symbol"])] = extra[r["yahoo"]]["theme"]
 
-    flags = risk_flags(rows, theme_of, pcfg)
+    flags = risk_flags(rows, theme_of, pcfg, sources)
     day_total = sum(r["day"] for r in rows)
     with_cost = [r for r in rows if r["pnl"] is not None]
     pnl_total = sum(r["pnl"] for r in with_cost)
@@ -313,7 +342,7 @@ def _build_section(cfg: dict, ask, today_rows: list[dict], holdings_root: Path) 
 
     as_of_text = "；".join(f"{b} {a[:16].replace('T', ' ')}" for b, a in sources)
     out = ["## 我的持仓", "",
-           f"持仓数据截至：{as_of_text}。价格来自长桥实时行情（取不到时用雅虎），日期见各卡片标题。", "",
+           f"持仓数据截至：{as_of_text}。价格来自长桥（取不到时用雅虎），日期见各卡片标题。", "",
            f"**总览**：股票市值 {money(stock_value)}，现金约 {money(cash_usd)}，合计约 {money(stock_value + cash_usd)}"
            f"（港币按 1 美元 = {fx:.2f} 港币折算）。上个交易日 {money(day_total, True)}"
            + (f"；按成本计累计 {money(pnl_total, True)}（{pnl_total / cost_total:+.1%}）" if cost_total else "")
@@ -331,28 +360,30 @@ def _build_section(cfg: dict, ask, today_rows: list[dict], holdings_root: Path) 
     out += ["", "### 风险提示", ""] + ([f"- {f}" for f in flags] or ["- 今天没有触发任何提示"]) + [""]
     out += ["### 盘面", "", market_line(pcfg["market"], bench), ""]
     for r in rows:
-        out += card(r, bench.get(r["benchmark"]), views.get(r["yahoo"], []), analyses.get(base_symbol(r["symbol"])))
-    out += ["“证据偏向”由 Gemini 根据上面的公开数据归纳，只说明证据倾向哪一边，不是买卖建议；"
-            "技术指标的解读是技术分析里的通常说法，不保证应验。", ""]
+        out += card(r, bench.get(r["benchmark"]), views.get(r["yahoo"], []), analyses.get(base_symbol(r["symbol"])),
+                    pcfg["blogger_days"])
+    out += ["证据偏向由 Gemini 根据公开数据归纳，不是买卖建议。", ""]
     return "\n".join(out), set(held.values()) | set(held)
 
 
-def risk_flags(rows: list[dict], theme_of: dict, pcfg: dict) -> list[str]:
-    """全部按固定规则计算，不经过 AI（主题名称除外）。"""
+def risk_flags(rows: list[dict], theme_of: dict, pcfg: dict, sources: list[tuple[str, str]] = (),
+               today: dt.date | None = None) -> list[str]:
+    """全部按固定规则计算，不经过 AI（主题名称除外）。同一只股票的多条提示合并成一行。"""
     flags = []
-    today = dt.datetime.now(LOCAL_TZ).date()
+    today = today or dt.datetime.now(LOCAL_TZ).date()
     for r in rows:
-        sym, t = r["yahoo"], r["d"].get("t")
+        t, parts = r["d"].get("t"), []
         if r["weight"] > pcfg["single_stock_warn"]:
-            flags.append(f"**单只集中**：{sym} 占股票市值 {r['weight']:.0%}（提示线 {pcfg['single_stock_warn']:.0%}）")
+            parts.append(f"占股票市值 {r['weight']:.0%}（提示线 {pcfg['single_stock_warn']:.0%}）")
         if r["pnl_pct"] is not None and r["pnl_pct"] <= -pcfg["loss_from_cost_warn"]:
-            flags.append(f"**较成本下跌**：{sym} 比成本价低 {-r['pnl_pct']:.0%}")
+            parts.append(f"比成本低 {-r['pnl_pct']:.0%}")
         if t and t["ma"][200] and t["last"] < t["ma"][200]:
-            flags.append(f"**低于 200 日均线**：{sym} 比 200 日均线低 {1 - t['last'] / t['ma'][200]:.0%}"
-                         "（长期趋势偏弱的常用信号）")
+            parts.append(f"低于 200 日均线 {1 - t['last'] / t['ma'][200]:.0%}")
         earnings = r["d"].get("earnings")
         if isinstance(earnings, dt.date) and 0 <= (earnings - today).days <= pcfg["earnings_within_days"]:
-            flags.append(f"**财报临近**：{sym} 预计 {earnings:%m-%d} 发布财报，股价可能大幅波动")
+            parts.append(f"预计 {earnings:%m-%d} 发布财报")
+        if parts:
+            flags.append(f"**{r['yahoo']}**：{'；'.join(parts)}")
     by_theme = defaultdict(list)
     for r in rows:
         theme = theme_of.get(base_symbol(r["symbol"]))
@@ -366,10 +397,25 @@ def risk_flags(rows: list[dict], theme_of: dict, pcfg: dict) -> list[str]:
     if missing:
         flags.append(f"**缺成本价**：{'、'.join(missing)} 没有成本价，"
                      f"没算进累计盈亏（在 {pcfg['manual_file']} 填上即可）")
+    flags += stale_flags(sources, today, pcfg.get("snapshot_stale_days", 14))
     expiry = news.longbridge_token_expiry()
     if expiry and (expiry - today).days <= 14:
         flags.append(f"**长桥凭证即将过期**：{expiry:%m-%d} 到期，"
                      "请在长桥开放平台更新 Access Token（过期后长桥新闻会缺失）")
+    return flags
+
+
+def stale_flags(sources: list[tuple[str, str]], today: dt.date, max_days: int) -> list[str]:
+    """持仓来源（快照的 as_of、手动表的 updated）超过 max_days 天没更新就提示；日期读不出来的跳过。"""
+    flags = []
+    for broker, as_of in sources:
+        try:
+            day = dt.date.fromisoformat(str(as_of)[:10])
+        except ValueError:
+            continue
+        n = (today - day).days
+        if n > max_days:
+            flags.append(f"**持仓数据过期**：{broker} 持仓数据已 {n} 天未更新，交易过的话请更新")
     return flags
 
 
@@ -399,7 +445,12 @@ def cited_only(points: list[str], news_items: list[dict]) -> list[str]:
     return kept
 
 
-def card(r: dict, b: dict | None, blogger: list[str], a: HoldingAnalysis | None) -> list[str]:
+def _join(points: list[str], n: int) -> str:
+    return "；".join(x.strip().rstrip("。；;") for x in points[:n] if x.strip())
+
+
+def card(r: dict, b: dict | None, blogger: list[dict], a: HoldingAnalysis | None, days: int = 7) -> list[str]:
+    """每只持仓约 6 行：数据、看多、看空、新闻、博主、要盯、结论；没有的项整行省略。"""
     d, t = r["d"], r["d"].get("t")
     mark = CURRENCY_MARK.get(r.get("currency", "USD"), "")
     if not t:
@@ -407,47 +458,46 @@ def card(r: dict, b: dict | None, blogger: list[str], a: HoldingAnalysis | None)
     when = "盘中" if r["intraday"] else f"{d['price_date']:%m-%d} 收盘"
     change = ta.pct(t["last"] / d["prev"] - 1) if d.get("prev") else ta.pct(t["r1d"])
     head = (f"### {r['yahoo']} {r['name']}｜{mark}{t['last']:,.2f}（{when}，{change}）"
-            + (f"｜证据：{a.lean}" if a else ""))
-    lo52, hi52 = t["range52w"]
-    lines = [f"**价位**：5 日 {ta.pct(t['r5d'])}，1 个月 {ta.pct(t['r1m'])}，今年以来 {ta.pct(t['ytd'])}；"
-             f"52 周收盘区间 {mark}{lo52:,.2f}–{mark}{hi52:,.2f}，距高点 {ta.pct(t['last'] / hi52 - 1)}"
-             + (f"；距你的成本价 {ta.pct(r['pnl_pct'])}" if r["pnl_pct"] is not None else "")]
-    lines += [f"**{k}**：{v}" for k, v in ta.describe(t).items()]
-    lo20, hi20 = t["range20"]
-    lo60, hi60 = t["range60"]
-    ma_text = "、".join(f"{n} 日均线 {mark}{v:,.2f}" for n, v in t["ma"].items() if v)
-    lines.append(f"**关键价位**：近 20 日收盘区间 {mark}{lo20:,.2f}–{mark}{hi20:,.2f}；"
-                 f"近 60 日 {mark}{lo60:,.2f}–{mark}{hi60:,.2f}；{ma_text}")
+            + (f"｜{a.lean}" if a else ""))
+
+    data = f"1 个月 {ta.pct(t['r1m'])}"
     if b and b.get("r1m") is not None and t["r1m"] is not None:
         gap = (t["r1m"] - b["r1m"]) * 100
-        lines.append(f"**与板块对比**：{r['benchmark']} 近 1 个月 {ta.pct(b['r1m'])}，{r['yahoo']} "
-                     f"{'跑赢' if gap >= 0 else '跑输'} {abs(gap):.1f} 个百分点")
+        data += f"，{'跑赢' if gap >= 0 else '跑输'} {r['benchmark']} {abs(gap):.1f} 个百分点"
+    facts = [data]
+    if r["pnl_pct"] is not None:
+        facts.append(f"距成本 {ta.pct(r['pnl_pct'])}")
+    facts += ta.brief(t)
     an = d.get("analyst")
     if an:
-        lines.append(f"**分析师**：{an['buy'] + an['hold'] + an['sell']} 位——{an['buy']} 买入、{an['hold']} 持有、"
-                     f"{an['sell']} 卖出；平均目标价 {mark}{an['mean']:,.2f}"
-                     f"（比现价 {ta.pct(an['mean'] / t['last'] - 1)}），"
-                     f"区间 {mark}{an['low']:,.2f}–{mark}{an['high']:,.2f}")
-    if d.get("valuation"):
-        lines.append("**估值**：" + "，".join(f"{'预期' if k == 'forwardPE' else '过去 12 个月'}市盈率 {v:.1f} 倍"
-                                           for k, v in d["valuation"].items()))
+        facts.append(f"分析师 {an['buy']}/{an['buy'] + an['hold'] + an['sell']} 买入，"
+                     f"均价目标 {ta.pct(an['mean'] / t['last'] - 1)}")
+    val = d.get("valuation") or {}
+    if val.get("forwardPE"):
+        facts.append(f"预期市盈率 {val['forwardPE']:.1f} 倍")
+    elif val.get("trailingPE"):
+        facts.append(f"过去 12 个月市盈率 {val['trailingPE']:.1f} 倍")
     if isinstance(d.get("earnings"), dt.date):
-        lines.append(f"**下次财报**：预计 {d['earnings']:%Y-%m-%d}")
-    out = [head, ""] + [f"- {x}" for x in lines] + [""]
+        facts.append(f"财报 {d['earnings']:%m-%d}")
+    lines = [f"**数据**：{'；'.join(facts)}"]
 
-    sources = "、".join(r["news_sources"]) or "无"
-    good, bad = (cited_only(a.good_news, r["news"]), cited_only(a.bad_news, r["news"])) if a else ([], [])
+    if a and a.bull_points:
+        lines.append(f"**看多**：{_join(a.bull_points, 2)}")
+    if a and a.bear_points:
+        lines.append(f"**看空**：{_join(a.bear_points, 2)}")
+    good, bad = (cited_only(a.good_news, r["news"])[:1], cited_only(a.bad_news, r["news"])[:1]) if a else ([], [])
     if good or bad:
-        out += [f"**近 7 天新闻**（来源：{sources}）", ""]
-        out += [f"- 利好：{x}" for x in good] + [f"- 利空：{x}" for x in bad] + [""]
+        lines.append("**新闻**：" + "；".join([f"利好 {x}" for x in good] + [f"利空 {x}" for x in bad]))
     elif r["news"]:
-        out += [f"**近 7 天新闻**（来源：{sources}）", ""]
-        out += [f"- {x['date'][5:]} {x['source']}：{x['title']}" for x in r["news"][:5]] + [""]
+        lines.append("**新闻**：" + "；".join(f"{x['date'][5:]} {x['source']}：{x['title']}" for x in r["news"][:2]))
     if blogger:
-        out += ["**博主怎么看**", ""] + [f"- {v}" for v in blogger] + [""]
-    if a:
-        out += ["**看多证据**", ""] + [f"- {x}" for x in a.bull_points] + [""]
-        out += ["**看空证据**", ""] + [f"- {x}" for x in a.bear_points] + [""]
-        out += ["**接下来要盯**", ""] + [f"- {x}" for x in a.watch] + [""]
-        out += [f"**证据天平：{a.lean}**——{a.lean_reason}", ""]
-    return out
+        counts = Counter(v["stance"] for v in blogger)
+        tally = "、".join(f"{counts[s]} {s}" for s in STANCES if counts[s])
+        latest = blogger[-1]
+        lines.append(f"**博主**：近 {days} 天 {tally}；最新 {latest['date'][5:]} {latest['channel']}"
+                     f"（{latest['stance']}）：{latest['reason']}")
+    if a and a.watch:
+        lines.append(f"**要盯**：{_join(a.watch, 2)}")
+    if a and a.lean_reason:
+        lines.append(f"**结论**：{a.lean_reason}")
+    return [head, ""] + [f"- {x}" for x in lines] + [""]

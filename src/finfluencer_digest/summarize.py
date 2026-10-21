@@ -8,6 +8,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 from . import x_posts
+from .aggregate import stance_roster, stock_mentions, symbol_aliases
 
 
 class StockView(BaseModel):
@@ -31,18 +32,25 @@ VIDEO_PROMPT = """你是一名客观的财经内容整理员。请完整观看�
 1. 只转述博主说了什么，不要加入你自己的判断或建议。
 2. 事实（有具体数字或来源）放 key_facts；预测、判断等观点放 main_points。
 3. 股票用美股代码；博主没有明确表态的记为“中性”。
-4. 全部用简体中文，不要出现繁体字。"""  # noqa: E501
+4. 金额和单位严格按博主原话：中文的万、亿、千亿、万亿，英文的 million、billion、trillion 不能换算错位（例如“三千亿美元”不能写成“30 亿美元”）；听不清或不确定的数字宁可不写进 key_facts。
+5. 语音转写常有同音错字，按上下文改成正确的词（例如“任性”在讲经济时多半是“韧性”），公司名、人名、术语尤其注意。
+6. 全部用简体中文，不要出现繁体字。"""  # noqa: E501
 
-SYNTH_PROMPT = """下面是今天 {n} 个财经博主视频的结构化摘要（JSON）。请写“今日共识与分歧”，分三组：
+SYNTH_PROMPT = """下面是今天 {n} 个财经博主视频的结构化摘要（JSON），以及程序统计好的每只股票看多、看空、中性的博主名单。请写“今日共识与分歧”，分三组：
 - **共识**：多位博主一致的判断，注明是哪几位
 - **分歧**：对同一问题或同一只股票看法相反的地方，注明各方观点
-- **值得自己核实**：博主给出的关键说法中，最需要读者自己去核实的（最多 3 条）
+- **值得自己核实**：博主给出的关键说法中，最需要读者自己去核实的（最多 2 条）
 要求：
 1. 只依据下面 JSON 里博主明确表达的内容；博主只是引用数据、没有表态的，不要写成他看多或看空。
-2. 只整理博主观点，不给出你自己的买卖建议。
-3. 不要输出任何标题，直接用 **共识**、**分歧**、**值得自己核实** 三个加粗小标题加 Markdown 列表；总共不超过 12 条；用简体中文。
-4. 只有一位博主时，只写该博主最值得注意的 3 条。
+2. 写某只股票由哪些博主看多、看空或中性时，必须与“博主名单”完全一致，不得增减或改换立场。
+3. 只整理博主观点，不给出你自己的买卖建议。
+4. 不要输出任何标题，直接用 **共识**、**分歧**、**值得自己核实** 三个加粗小标题加 Markdown 列表；总共不超过 6 条，每条一句话；用简体中文。
+5. 只有一位博主时，只写该博主最值得注意的 3 条。
 
+博主名单：
+{roster}
+
+摘要：
 {data}"""  # noqa: E501
 
 
@@ -88,7 +96,8 @@ def summarize_x(llm, cfg: dict, account: dict, posts: list[dict], today: str) ->
 def synthesize(llm, cfg: dict, results: list) -> str:
     data = json.dumps([{"博主": v["channel"], "标题": v["title"], **s.model_dump()} for v, s in results],
                       ensure_ascii=False)
-    prompt = SYNTH_PROMPT.format(n=len(results), data=data)
+    roster = stance_roster(stock_mentions(results, symbol_aliases(cfg)))
+    prompt = SYNTH_PROMPT.format(n=len(results), roster=json.dumps(roster, ensure_ascii=False), data=data)
     try:
         text = llm.ask(cfg["synth_models"], label="synth", contents=prompt).text
     except Exception:

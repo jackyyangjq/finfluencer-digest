@@ -12,6 +12,7 @@ from collections import defaultdict
 from types import SimpleNamespace
 
 from google import genai
+from google.genai import errors as genai_errors
 
 from .summarize import VideoSummary
 
@@ -19,7 +20,13 @@ logging.getLogger("google_genai.models").setLevel(logging.ERROR)  # 屏蔽与本
 
 
 def short_error(e: Exception) -> str:
+    """把异常压成一句话。只有 google.genai 的错误才说是 Gemini；其他接口（如读取 X 帖子）的 HTTP 错误写成“接口返回”。"""
     code = getattr(e, "code", None)
+    if not isinstance(e, genai_errors.APIError):
+        if isinstance(code, int):
+            reason = getattr(e, "reason", "") or getattr(e, "msg", "")
+            return f"接口返回 {code}" + (f"（{str(reason)[:100]}）" if reason else "")
+        return f"{type(e).__name__}: {str(e)[:150]}"
     if code == 429:
         return "超出 Gemini 的额度或频率限制（429）"
     if code in (500, 502, 503, 504):

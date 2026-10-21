@@ -1,6 +1,6 @@
 [project]
 name = "finfluencer-digest"
-version = "1.0.0"
+version = "1.1.0"
 description = "Daily digest of finance YouTubers and X accounts: Gemini watches the videos, extracts structured stock calls, aggregates consensus, and emails you."
 readme = "README.md"
 requires-python = ">=3.12"

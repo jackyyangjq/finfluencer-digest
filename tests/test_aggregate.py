@@ -28,3 +28,24 @@ def test_call_rows_drops_empty_symbols():
     assert [r["symbol"] for r in rows] == ["QQQ"]
     assert rows[0] == {"date": "2026-09-23", "channel": "A", "video_id": "v1", "symbol": "QQQ", "name": "纳指",
                        "stance": "中性", "reason": "r"}
+
+
+def test_canonical_symbol_merges_share_classes():
+    from finfluencer_digest.aggregate import canonical_symbol
+    assert canonical_symbol("googl") == "GOOG" and canonical_symbol("$GOOG") == "GOOG"
+    assert {canonical_symbol(s) for s in ("BRK.A", "BRK-B", "brk/b", "BRK.B")} == {"BRK.B"}
+    assert canonical_symbol("NVDA") == "NVDA"
+
+
+def test_symbol_aliases_from_config_add_and_override():
+    from finfluencer_digest.aggregate import canonical_symbol, symbol_aliases
+    aliases = symbol_aliases({"symbol_aliases": {"goog": "GOOGL", "FB": "META"}})
+    assert canonical_symbol("GOOG", aliases) == "GOOGL" and canonical_symbol("GOOGL", aliases) == "GOOGL"
+    assert canonical_symbol("FB", aliases) == "META" and canonical_symbol("BRK-B", aliases) == "BRK.B"
+    assert symbol_aliases({}) == symbol_aliases(None)
+
+
+def test_stock_mentions_merges_same_company_into_one_row():
+    results = [({"channel": "A"}, vs(("GOOGL", "谷歌", "看多"))), ({"channel": "B"}, vs(("GOOG", "谷歌", "看空")))]
+    m = stock_mentions(results)
+    assert list(m) == ["GOOG"] and m["GOOG"]["看多"] == ["A"] and m["GOOG"]["看空"] == ["B"]

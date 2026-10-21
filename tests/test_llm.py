@@ -70,3 +70,18 @@ def test_recorded_gemini_replays_by_label():
     assert llm.usage == {"m1": [1, 1000, 200], "p": [2, 2000, 400]}
     with pytest.raises(KeyError):
         llm.generate(["m1"], label="video:没录过")
+
+
+def test_short_error_names_gemini_only_for_genai_errors():
+    from urllib.error import HTTPError
+
+    from google.genai import errors
+
+    from finfluencer_digest.llm import short_error
+    x_error = HTTPError("https://api.fxtwitter.com/x", 404, "Not Found", {}, None)
+    assert short_error(x_error) == "接口返回 404（Not Found）"
+    assert "Gemini" not in short_error(Err(404)) and "Gemini" not in short_error(Err(503))
+    gemini_error = errors.ClientError(404, {"error": {"code": 404, "message": "model not found"}})
+    assert short_error(gemini_error) == "Gemini 拒绝处理（404）：model not found"
+    assert short_error(errors.ServerError(503, {"error": {"code": 503}})) == "Gemini 服务暂时繁忙（503）"
+    assert short_error(ValueError("bad")) == "ValueError: bad"

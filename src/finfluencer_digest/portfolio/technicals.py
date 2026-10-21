@@ -76,5 +76,32 @@ def describe(t: dict) -> dict[str, str]:
     return out
 
 
+def brief(t: dict) -> list[str]:
+    """持仓卡片用的精简版：趋势一句；RSI 只在超买超卖时写，MACD 只在 5 个交易日内交叉时写，
+    成交量只在达到 20 日均量 2 倍以上时写。"""
+    last, ma = t["last"], t["ma"]
+    out = []
+    if all(ma.values()):
+        if last > ma[20] > ma[50] > ma[200]:
+            out.append("多头排列，上升趋势")
+        elif last < ma[20] < ma[50] < ma[200]:
+            out.append("空头排列，下降趋势")
+        elif all(last > v for v in ma.values()):
+            out.append("站上全部均线，趋势偏强")
+        elif all(last < v for v in ma.values()):
+            out.append("跌破全部均线，趋势偏弱")
+        else:
+            out.append(f"均线交织，长期{'偏强' if last > ma[200] else '偏弱'}")
+    if t["rsi"] is not None and (t["rsi"] > 70 or t["rsi"] < 30):
+        out.append(f"RSI {t['rsi']:.0f}，{'超买' if t['rsi'] > 70 else '超卖'}")
+    days = t["macd_cross_days"]
+    if days is not None and days < 5:
+        kind = "金叉" if t["macd_above"] else "死叉"
+        out.append(f"MACD {days} 个交易日前{kind}" if days else f"MACD 最近一个交易日{kind}")
+    if t["vol_ratio"] is not None and t["vol_ratio"] >= 2:
+        out.append(f"成交量为 20 日均量的 {t['vol_ratio']:.1f} 倍")
+    return out
+
+
 def pct(x: float | None) -> str:
     return f"{x:+.1%}" if x is not None else "—"

@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import demo, x_posts
-from .aggregate import call_rows
+from .aggregate import call_rows, symbol_aliases
 from .check import check
 from .config import LOCAL_TZ, load_config, load_env
 from .gate import should_run
@@ -234,7 +234,7 @@ def run_digest(rt: Runtime, args: argparse.Namespace) -> int:
         print("生成持仓部分…", flush=True)
         portfolio_md, held = _portfolio_section(cfg, llm, rows, rt.paths)
     md = build_digest(now_london.strftime("%Y-%m-%d"), results, synth, failures, skipped, rt.watch, llm.usage_text(),
-                      portfolio_md, frozenset(held))
+                      portfolio_md, frozenset(held), symbol_aliases(cfg))
 
     rt.digest_dir.mkdir(parents=True, exist_ok=True)
     path = rt.digest_dir / f"{now_london:%Y-%m-%d}.md"
